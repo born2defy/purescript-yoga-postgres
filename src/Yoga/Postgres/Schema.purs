@@ -903,6 +903,15 @@ else instance
   ) =>
   ParseSelectHandleAS "as" afterKeyword colRef tables accRL outRL
 
+-- Bare alias (no AS keyword): "name n" means "name AS n"
+else instance
+  ( ResolveColumn colRef tables entry
+  , ExtractType entry typ
+  , SkipSpaces afterKeyword rest
+  , ParseSelectExpectEnd rest tables (RL.Cons keyword typ accRL) outRL
+  ) =>
+  ParseSelectHandleAS keyword afterKeyword colRef tables accRL outRL
+
 class ParseSelectExpectEnd :: Symbol -> Row (Row Type) -> RL.RowList Type -> RL.RowList Type -> Constraint
 class ParseSelectExpectEnd sym tables accRL outRL | sym tables accRL -> outRL
 
