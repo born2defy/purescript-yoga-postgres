@@ -2846,6 +2846,9 @@ from _ = Q { sql: reflectSymbol (Proxy :: Proxy name), values: [] }
 fromAs :: forall @alias name cols tables. IsSymbol name => IsSymbol alias => Row.Cons alias cols () tables => Proxy (Table name cols) -> Q tables () () ()
 fromAs _ = Q { sql: reflectSymbol (Proxy :: Proxy name) <> " " <> reflectSymbol (Proxy :: Proxy alias), values: [] }
 
+into :: forall name cols tables. IsSymbol name => Row.Cons name cols () tables => Proxy (Table name cols) -> Q tables () () (into :: Unit)
+into _ = Q { sql: reflectSymbol (Proxy :: Proxy name), values: [] }
+
 selectAll
   :: forall tables name cols result r p stage stage'
    . SingleTable tables name cols
@@ -2853,6 +2856,7 @@ selectAll
   => StripColumns cols result
   => Row.Lacks "select" stage
   => Row.Lacks "insert" stage
+  => Row.Lacks "into" stage
   => Row.Lacks "set" stage
   => Row.Lacks "delete" stage
   => Row.Lacks "where" stage
@@ -2870,6 +2874,7 @@ select
   => ParseSelect sel tables result
   => Row.Lacks "select" stage
   => Row.Lacks "insert" stage
+  => Row.Lacks "into" stage
   => Row.Lacks "set" stage
   => Row.Lacks "delete" stage
   => Row.Lacks "where" stage
@@ -2887,6 +2892,7 @@ selectDistinct
   => ParseSelect sel tables result
   => Row.Lacks "select" stage
   => Row.Lacks "insert" stage
+  => Row.Lacks "into" stage
   => Row.Lacks "set" stage
   => Row.Lacks "delete" stage
   => Row.Lacks "where" stage
@@ -2907,6 +2913,7 @@ selectDistinctOn
   => ParseSelect sel tables result
   => Row.Lacks "select" stage
   => Row.Lacks "insert" stage
+  => Row.Lacks "into" stage
   => Row.Lacks "set" stage
   => Row.Lacks "delete" stage
   => Row.Lacks "where" stage
@@ -3184,6 +3191,7 @@ set
   => RecordValuesRL setRL setRow
   => Row.Lacks "select" stage
   => Row.Lacks "insert" stage
+  => Row.Lacks "into" stage
   => Row.Lacks "set" stage
   => Row.Lacks "delete" stage
   => Row.Cons "set" Unit stage stage'
@@ -3207,6 +3215,7 @@ delete
   => IsSymbol name
   => Row.Lacks "select" stage
   => Row.Lacks "insert" stage
+  => Row.Lacks "into" stage
   => Row.Lacks "set" stage
   => Row.Lacks "delete" stage
   => Row.Cons "delete" Unit stage stage'
