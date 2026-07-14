@@ -2,27 +2,20 @@ import postgres from 'postgres';
 
 // Create Postgres connection
 export const postgresImpl = (config) => {
-  // Support both individual config and connection string
-  if (config.connection) {
-    return postgres(config.connection, config);
-  }
-  
-  return postgres({
-    host: config.host,
-    port: config.port,
-    database: config.database,
-    username: config.username,
-    password: config.password,
-    max: config.max,
-    idle_timeout: config.idle_timeout,
-    connect_timeout: config.connect_timeout,
-    ssl: config.ssl,
-    debug: config.debug,
-    onnotice: config.onnotice,
-    onparameter: config.onparameter,
-    // Pass through any other options
-    ...config
-  });
+  const { connection, ...configOptions } = config;
+  const options = {
+    ...configOptions,
+    onnotice: config.onnotice
+      ? () => config.onnotice()
+      : undefined,
+    onparameter: config.onparameter
+      ? (key, value) => config.onparameter({ key, value })()
+      : undefined
+  };
+
+  return connection
+    ? postgres(connection, options)
+    : postgres(options);
 };
 
 // Query operations
@@ -92,27 +85,29 @@ export const beginImpl = async (sql) => {
 };
 
 export const commitImpl = async (txn) => {
-  if (txn._reserved) {
-    await txn._reserved`COMMIT`;
-    // Release the connection back to the pool
-    await txn._reserved.release();
+  if (!txn._reserved) return;
+
+  const reserved = txn._reserved;
+  txn._reserved = null;
+  try {
+    await reserved`COMMIT`;
+  } finally {
+    await reserved.release();
   }
 };
 
 export const rollbackImpl = async (txn) => {
-  if (txn._reserved) {
-    await txn._reserved`ROLLBACK`;
-    // Release the connection back to the pool
-    await txn._reserved.release();
+  if (!txn._reserved) return;
+
+  const reserved = txn._reserved;
+  txn._reserved = null;
+  try {
+    await reserved`ROLLBACK`;
+  } finally {
+    await reserved.release();
   }
 };
 
-export const transactionImpl = async (sql, handler) => {
-  return sql.begin(async (txn) => {
-    const affAction = handler(txn);
-    return await affAction();
-  });
-};
 
 export const txQueryImpl = async (txn, queryString, params) => {
   // Use the underlying SQL connection
@@ -147,19 +142,24 @@ export const endImpl = (sql) => sql.end();
 
 // Listen/Notify
 
+const listeners = new WeakMap();
+
 export const listenImpl = async (sql, channel, handler) => {
-  await sql.listen(channel, (payload) => {
+  const subscription = await sql.listen(channel, (payload) => {
     handler({ channel, payload })();
   });
+  const byChannel = listeners.get(sql) || new Map();
+  const subscriptions = byChannel.get(channel) || [];
+  subscriptions.push(subscription);
+  byChannel.set(channel, subscriptions);
+  listeners.set(sql, byChannel);
 };
 
 export const unlistenImpl = async (sql, channel) => {
-  // postgres.js uses the same listen method to unlisten
-  if (sql.listen.unlisten) {
-    return sql.listen.unlisten(channel);
-  }
-  // Alternative: just resolve, as postgres.js handles cleanup automatically
-  return Promise.resolve();
+  const byChannel = listeners.get(sql);
+  const subscriptions = byChannel?.get(channel) || [];
+  await Promise.all(subscriptions.map(({ unlisten }) => unlisten()));
+  byChannel?.delete(channel);
 };
 
 export const notifyImpl = (sql, channel, payload) => 

@@ -2,18 +2,22 @@ module Yoga.Postgres where
 
 import Prelude
 
+
+
 import Data.Maybe (Maybe)
 import Data.Newtype (class Newtype)
 import Data.Nullable (Nullable)
 import Data.Nullable as Nullable
 import Data.Time.Duration (Milliseconds)
+import Data.UUID (UUID)
+import Data.UUID as UUID
 import Effect (Effect)
-import Effect.Aff (Aff)
+import Effect.Aff (Aff, generalBracket)
 import Effect.Uncurried (EffectFn1, EffectFn2, EffectFn3, runEffectFn1, runEffectFn2, runEffectFn3)
 import Foreign (Foreign)
 import Prim.Row (class Union)
 import Promise (Promise)
-import Promise.Aff (fromAff, toAffE) as Promise
+import Promise.Aff (toAffE) as Promise
 import Unsafe.Coerce (unsafeCoerce)
 
 -- Opaque Postgres types
@@ -113,6 +117,9 @@ instance ToPGValue Boolean where
 
 instance ToPGValue a => ToPGValue (Array a) where
   toPGValue arr = unsafeCoerce (map toPGValue arr)
+
+instance ToPGValue UUID where
+  toPGValue = toPGValue <<< UUID.toString
 
 instance ToPGValue Foreign where
   toPGValue = unsafeCoerce
@@ -219,13 +226,16 @@ foreign import rollbackImpl :: EffectFn1 Transaction (Promise Unit)
 rollback :: Transaction -> Aff Unit
 rollback = runEffectFn1 rollbackImpl >>> Promise.toAffE
 
--- Run transaction block (automatic commit/rollback)
-foreign import transactionImpl :: EffectFn2 Connection (Transaction -> Effect (Promise Unit)) (Promise Unit)
 
-transaction :: (Transaction -> Aff Unit) -> Connection -> Aff Unit
-transaction handler conn =
-  runEffectFn2 transactionImpl conn (\txn -> Promise.fromAff (handler txn))
-    # Promise.toAffE
+-- Low-level escape hatch for code that needs the raw transaction handle.
+withTransaction :: forall a. (Transaction -> Aff a) -> Connection -> Aff a
+withTransaction operation conn =
+  generalBracket (begin conn)
+    { killed: \_ -> rollback
+    , failed: \_ -> rollback
+    , completed: \_ -> commit
+    }
+    operation
 
 -- Query within transaction
 foreign import txQueryImpl :: EffectFn3 Transaction SQL (Array PGValue) (Promise QueryResult)

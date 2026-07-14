@@ -4,6 +4,7 @@ import Prelude
 
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
+import Data.Time.Duration (Milliseconds(..))
 import Effect (Effect)
 import Effect.Aff (Aff, bracket, launchAff_, throwError, try)
 import Effect.Class (liftEffect)
@@ -11,6 +12,7 @@ import Effect.Console (log)
 import Effect.Exception (error)
 import Test.Spec (Spec, around, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
+import Test.Postgres.Behavioral as Behavioral
 import Test.Spec.Reporter.Console (consoleReporter)
 import Test.Spec.Runner (runSpec)
 import Yoga.Test.Docker as Docker
@@ -22,7 +24,7 @@ testHost :: PG.PostgresHost
 testHost = PG.PostgresHost "localhost"
 
 testPort :: PG.PostgresPort
-testPort = PG.PostgresPort 5433 -- Test port from docker-compose.test.yml
+testPort = PG.PostgresPort 5434 -- Test port from docker-compose.test.yml
 
 testDatabase :: PG.PostgresDatabase
 testDatabase = PG.PostgresDatabase "test_playground"
@@ -93,6 +95,11 @@ setupTableWithConstraints conn = do
 spec :: Spec Unit
 spec = do
   Schema.spec
+  Behavioral.pureSpec
+
+  around withPostgres do
+    Behavioral.integrationSpec
+
 
   describe "Yoga.Postgres Integration Tests" do
 
@@ -106,7 +113,7 @@ spec = do
         it "retrieves connection options" \conn -> do
           opts <- liftEffect $ PG.options conn
           opts.host `shouldSatisfy` (_ /= "")
-          opts.port `shouldEqual` 5433
+          opts.port `shouldEqual` 5434
           opts.database `shouldEqual` "test_playground"
 
     describe "Connection Errors" do
@@ -233,7 +240,7 @@ spec = do
         it "commits transactions successfully" \conn -> do
           setupTestTable conn
 
-          _ <- PG.transaction
+          _ <- PG.withTransaction
             ( \txn -> do
                 _ <- PG.txExecute (PG.SQL "INSERT INTO test_users (name) VALUES ($1)")
                   [ PG.toPGValue "Henry" ]
@@ -251,12 +258,12 @@ spec = do
         it "rolls back on errors" \conn -> do
           setupTestTable conn
 
-          result <- try $ PG.transaction
+          result <- try $ PG.withTransaction
             ( \txn -> do
                 _ <- PG.txExecute (PG.SQL "INSERT INTO test_users (name) VALUES ($1)")
                   [ PG.toPGValue "Jack" ]
                   txn
-                throwError (error "Intentional error")
+                (throwError (error "Intentional error") :: Aff Unit)
             )
             conn
 
@@ -268,7 +275,7 @@ spec = do
         it "queries within transaction" \conn -> do
           setupTestTable conn
 
-          _ <- PG.transaction
+          _ <- PG.withTransaction
             ( \txn -> do
                 _ <- PG.txExecute (PG.SQL "INSERT INTO test_users (name) VALUES ($1)")
                   [ PG.toPGValue "Leo" ]
@@ -433,11 +440,11 @@ main = launchAff_ do
   bracket
     ( do
         liftEffect $ log "Starting Postgres and waiting for it to be ready..."
-        Docker.startService "docker-compose.test.yml" 30
+        Docker.startService (Docker.ComposeFile "docker-compose.test.yml") (Docker.Timeout (Milliseconds 30000.0))
         liftEffect $ log "Postgres is ready!\n"
     )
     ( \_ -> do
-        Docker.stopService "docker-compose.test.yml"
+        Docker.stopService (Docker.ComposeFile "docker-compose.test.yml")
         liftEffect $ log "Cleanup complete\n"
     )
     (\_ -> runSpec [ consoleReporter ] spec)

@@ -232,15 +232,15 @@ typedInsertReturning = from usersTable
 
 typedSet
   :: Q _ () () _
-typedSet = from usersTable # set { name: "Bob" }
+typedSet = update usersTable # set { name: "Bob" }
 
 typedSetWhere
   :: Q _ () (id :: Int) _
-typedSetWhere = from usersTable # set { name: "Bob" } # where_ @"id = $id"
+typedSetWhere = update usersTable # set { name: "Bob" } # where_ @"id = $id"
 
 typedSetReturning
   :: Q _ (id :: Int, name :: String, email :: String) (id :: Int) _
-typedSetReturning = from usersTable
+typedSetReturning = update usersTable
   # set { name: "Bob" }
   # where_ @"id = $id"
   # returning @"id, name, email"
@@ -771,7 +771,7 @@ spec = do
       it "renders DEFAULT in DDL" do
         configDDL `shouldEqual` "CREATE TABLE config (active BOOLEAN NOT NULL DEFAULT true, id INTEGER NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY, role TEXT NOT NULL DEFAULT 'user', score INTEGER NOT NULL DEFAULT 0)"
       it "skips Default columns in INSERT" do
-        configInsertSQL `shouldEqual` "INSERT INTO config () VALUES () RETURNING *"
+        configInsertSQL `shouldEqual` "INSERT INTO config DEFAULT VALUES RETURNING *"
 
     describe "UUID + DefaultExpr" do
       it "renders UUID and DefaultExpr in DDL" do
@@ -1070,7 +1070,7 @@ integrationSpec conn = do
   describe "Builder update execution" do
     it "updates a row" do
       resetUsers conn
-      count <- from usersTable
+      count <- update usersTable
         # set { email: "alice-updated@example.com" }
         # where_ @"name = $name"
         # runExecute conn { name: "Alice" }
@@ -1082,7 +1082,7 @@ integrationSpec conn = do
       result `shouldEqual` Just { email: "alice-updated@example.com" }
 
     it "updates with RETURNING" do
-      rows <- from usersTable
+      rows <- update usersTable
         # set { age: Just 99 }
         # where_ @"name = $name"
         # returning @"name, age"

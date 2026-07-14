@@ -15,7 +15,7 @@ main :: Effect Unit
 main = launchAff_ do
   conn <- liftEffect $ PG.postgres
     { host: PG.PostgresHost "localhost"
-    , port: PG.PostgresPort 5433
+    , port: PG.PostgresPort 5434
     , database: PG.PostgresDatabase "test_playground"
     , username: PG.PostgresUsername "postgres"
     , password: PG.PostgresPassword "postgres"

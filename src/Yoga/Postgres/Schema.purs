@@ -2,47 +2,46 @@ module Yoga.Postgres.Schema where
 
 import Prelude
 
-import Data.Array as Array
+import Control.Monad.Except (except, runExcept)
 import Data.Array (intercalate, mapWithIndex, foldl)
-import Data.Date (Date)
-import Data.Enum (toEnum)
-import Data.DateTime (DateTime(..), date, time)
+import Data.Array as Array
+import Data.Date (Date, day, month, year)
+import Data.DateTime (DateTime(..))
+import Data.Either (Either(..), note)
+import Data.Enum (fromEnum, toEnum)
+import Data.Int as Int
 import Data.JSDate as JSDate
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
-import Data.Time (Time(..))
+import Data.List.Types (NonEmptyList)
+import Data.Map as Map
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Newtype (class Newtype)
 import Data.Nullable (toNullable)
-import Data.UUID (UUID)
-import JS.BigInt (BigInt)
-import Unsafe.Coerce (unsafeCoerce)
-import Data.Reflectable (class Reflectable, reflectType)
-import Data.String.Regex (regex, replace') as Regex
-import Data.String.Regex (Regex) as Regex
-import Data.String.Regex.Flags (global) as Regex
-import Control.Monad.Except (except, runExcept)
-import Data.Either (Either(..), note)
-import Data.Int as Int
-import Data.List.Types (NonEmptyList)
 import Data.Number as Number
+import Data.Reflectable (class Reflectable, reflectType)
+import Data.String.CodeUnits as SCU
 import Data.String.Common as Str
 import Data.String.Pattern (Pattern(..))
-import Data.String.CodeUnits as SCU
-import Data.Traversable (traverse)
-import Effect.Exception (error) as Exception
-import Data.Map as Map
+import Data.String.Regex (Regex, regex, replace') as Regex
+import Data.String.Regex.Flags (global) as Regex
 import Data.Symbol (class IsSymbol, reflectSymbol)
-import Type.Function (type (#))
+import Data.Time (Time(..))
+import Data.Traversable (traverse)
+import Data.UUID (UUID)
+import Data.UUID as UUID
 import Effect.Aff (Aff, throwError)
+import Effect.Exception (error) as Exception
 import Foreign (Foreign, ForeignError(..))
+import JS.BigInt (BigInt)
 import Prim.Boolean (True, False)
 import Prim.Row (class Cons, class Lacks, class Union, class Nub) as Row
-import Prim.RowList as RL
 import Prim.RowList (class RowToList)
+import Prim.RowList as RL
 import Prim.Symbol (class Cons, class Append) as Symbol
 import Prim.TypeError (class Fail, Beside, Text, Quote)
 import Record (get) as Record
 import Type.Proxy (Proxy(..))
 import Type.RowList (class ListToRow)
+import Unsafe.Coerce (unsafeCoerce)
 import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
 import Yoga.Postgres as PG
 
@@ -69,6 +68,9 @@ data Unique a
 
 data Default :: forall k. k -> Type -> Type
 data Default val a
+data DefaultExpr :: Symbol -> Type -> Type
+data DefaultExpr expression a
+
 
 data References
 
@@ -90,6 +92,9 @@ derive instance Newtype Jsonb _
 instance ReadForeign Jsonb where
   readImpl = pure <<< Jsonb
 
+instance WriteForeign Jsonb where
+  writeImpl (Jsonb value) = value
+
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- PGUUID: newtype over Data.UUID.UUID for Postgres integration
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -105,6 +110,9 @@ instance ReadForeign PGUUID where
   readImpl f = do
     s :: String <- readImpl f
     pure (unsafeCoerce s)
+
+instance WriteForeign PGUUID where
+  writeImpl (PGUUID uuid) = writeImpl (UUID.toString uuid)
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- PGDate / PGTime: newtypes for DATE and TIME columns
@@ -124,6 +132,18 @@ instance ReadForeign PGDate where
     where
     jsDate :: JSDate.JSDate
     jsDate = unsafeCoerce f
+
+instance WriteForeign PGDate where
+  writeImpl (PGDate date) =
+    writeImpl
+      ( show (fromEnum (year date))
+          <> "-"
+          <> pad2 (fromEnum (month date))
+          <> "-"
+          <> pad2 (fromEnum (day date))
+      )
+    where
+    pad2 n = if n < 10 then "0" <> show n else show n
 
 newtype TimestampTZ = TimestampTZ DateTime
 
@@ -161,9 +181,33 @@ instance ReadForeign PGTime where
           mi <- Int.fromString mStr >>= toEnum
           let secParts = Str.split (Pattern ".") sStr
           s <- Int.fromString (fromMaybe sStr (Array.head secParts)) >>= toEnum
-          let ms = fromMaybe bottom (Array.index secParts 1 >>= Int.fromString >>= toEnum)
+          let fraction = fromMaybe "" (Array.index secParts 1)
+          let milliseconds = case SCU.length fraction of
+                0 -> "0"
+                1 -> fraction <> "00"
+                2 -> fraction <> "0"
+                _ -> SCU.take 3 fraction
+          let ms = fromMaybe bottom (Int.fromString milliseconds >>= toEnum)
           pure (PGTime (Time h mi s ms))
         _ -> Nothing
+
+instance WriteForeign PGTime where
+  writeImpl (PGTime (Time hour minute second millisecond)) =
+    writeImpl
+      ( pad2 (fromEnum hour)
+          <> ":"
+          <> pad2 (fromEnum minute)
+          <> ":"
+          <> pad2 (fromEnum second)
+          <> "."
+          <> pad3 (fromEnum millisecond)
+      )
+    where
+    pad2 n = if n < 10 then "0" <> show n else show n
+    pad3 n
+      | n < 10 = "00" <> show n
+      | n < 100 = "0" <> show n
+      | otherwise = show n
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- Point: geometric point "(x,y)"
@@ -243,6 +287,7 @@ instance ExtractType a typ => ExtractType (PrimaryKey a) typ
 else instance ExtractType a typ => ExtractType (AutoIncrement a) typ
 else instance ExtractType a typ => ExtractType (Unique a) typ
 else instance ExtractType a typ => ExtractType (Default val a) typ
+else instance ExtractType a typ => ExtractType (DefaultExpr expression a) typ
 else instance ExtractType a typ => ExtractType (ForeignKey t r c a) typ
 else instance ExtractType a typ => ExtractType (Nullable a) (Maybe typ)
 else instance ExtractType a a
@@ -315,6 +360,12 @@ instance Reflectable sym String => RenderDefaultValue sym String where
 instance Reflectable val Int => RenderDefaultValue val Int where
   renderDefaultValue _ _ = "DEFAULT " <> show (reflectType (Proxy :: Proxy val))
 
+instance RenderDefaultValue True Boolean where
+  renderDefaultValue _ _ = "DEFAULT true"
+
+instance RenderDefaultValue False Boolean where
+  renderDefaultValue _ _ = "DEFAULT false"
+
 instance RenderDefaultValue "true" Boolean where
   renderDefaultValue _ _ = "DEFAULT true"
 
@@ -326,6 +377,7 @@ instance RenderDefaultValue "now()" TimestampTZ where
 
 instance RenderDefaultValue "gen_random_uuid()" PGUUID where
   renderDefaultValue _ _ = "DEFAULT gen_random_uuid()"
+
 
 class RenderConstraint a where
   renderConstraint :: Proxy a -> String
@@ -342,6 +394,10 @@ else instance RenderConstraint a => RenderConstraint (Unique a) where
 else instance (RenderDefaultValue val a, RenderConstraint a) => RenderConstraint (Default val a) where
   renderConstraint _ = joinConstraints (renderDefaultValue (Proxy :: Proxy val) (Proxy :: Proxy a)) (renderConstraint (Proxy :: Proxy a))
 
+else instance (IsSymbol expression, RenderConstraint a) => RenderConstraint (DefaultExpr expression a) where
+  renderConstraint _ = joinConstraints
+    ("DEFAULT " <> reflectSymbol (Proxy :: Proxy expression))
+    (renderConstraint (Proxy :: Proxy a))
 else instance (IsSymbol table, IsSymbol col, RenderConstraint a) => RenderConstraint (ForeignKey table References col a) where
   renderConstraint _ = joinConstraints
     ("REFERENCES " <> reflectSymbol (Proxy :: Proxy table) <> "(" <> reflectSymbol (Proxy :: Proxy col) <> ")")
@@ -402,6 +458,11 @@ instance
     let columns = renderColumnsRL (Proxy :: Proxy rl)
     "CREATE TABLE " <> tableName <> " (" <> intercalate ", " columns <> ")"
 
+createTableDDLIfNotExists :: forall @a. CreateTableDDL a => String
+createTableDDLIfNotExists = do
+  let ddl = createTableDDL @a
+  "CREATE TABLE IF NOT EXISTS" <> SCU.drop 12 ddl
+
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- INSERT SQL generation
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -412,6 +473,8 @@ class IsAutoGenerated a where
 instance IsAutoGenerated (AutoIncrement a) where
   isAutoGenerated _ = true
 else instance IsAutoGenerated (Default v a) where
+  isAutoGenerated _ = true
+else instance IsAutoGenerated (DefaultExpr expression a) where
   isAutoGenerated _ = true
 else instance IsAutoGenerated a => IsAutoGenerated (PrimaryKey a) where
   isAutoGenerated _ = isAutoGenerated (Proxy :: Proxy a)
@@ -456,15 +519,18 @@ instance
   insertSQLFor = do
     let tableName = reflectSymbol (Proxy :: Proxy name)
     let cols = insertColumnsRL (Proxy :: Proxy rl)
-    let placeholders = cols # mapWithIndex \i _ -> "$" <> show (i + 1)
-    "INSERT INTO " <> tableName
-      <> " ("
-      <> intercalate ", " cols
-      <> ")"
-      <> " VALUES ("
-      <> intercalate ", " placeholders
-      <> ")"
-      <> " RETURNING *"
+    if Array.null cols then
+      "INSERT INTO " <> tableName <> " DEFAULT VALUES RETURNING *"
+    else do
+      let placeholders = cols # mapWithIndex \i _ -> "$" <> show (i + 1)
+      "INSERT INTO " <> tableName
+        <> " ("
+        <> intercalate ", " cols
+        <> ")"
+        <> " VALUES ("
+        <> intercalate ", " placeholders
+        <> ")"
+        <> " RETURNING *"
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- SELECT SQL generation
@@ -2732,6 +2798,7 @@ class IsAutoGeneratedTC constraints result | constraints -> result
 
 instance IsAutoGeneratedTC (AutoIncrement a) True
 else instance IsAutoGeneratedTC (Default s a) True
+else instance IsAutoGeneratedTC (DefaultExpr expression a) True
 else instance IsAutoGeneratedTC a result => IsAutoGeneratedTC (PrimaryKey a) result
 else instance IsAutoGeneratedTC a result => IsAutoGeneratedTC (Unique a) result
 else instance IsAutoGeneratedTC a result => IsAutoGeneratedTC (ForeignKey t r c a) result
@@ -2787,13 +2854,15 @@ class FieldToPGValue a where
   fieldToPGValue :: a -> PG.PGValue
 
 instance FieldToPGValue a => FieldToPGValue (Maybe a) where
-  fieldToPGValue = toNullable >>> unsafeCoerce
+  fieldToPGValue = case _ of
+    Nothing -> unsafeCoerce (toNullable Nothing)
+    Just value -> fieldToPGValue value
 else instance FieldToPGValue DateTime where
   fieldToPGValue = JSDate.fromDateTime >>> unsafeCoerce
 else instance FieldToPGValue TimestampTZ where
   fieldToPGValue (TimestampTZ dt) = JSDate.fromDateTime dt # unsafeCoerce
 else instance FieldToPGValue PGDate where
-  fieldToPGValue (PGDate d) = JSDate.fromDateTime (DateTime d bottom) # unsafeCoerce
+  fieldToPGValue = writeImpl >>> unsafeCoerce
 else instance FieldToPGValue PGUUID where
   fieldToPGValue = unsafeCoerce
 else instance WriteForeign a => FieldToPGValue a where
@@ -2864,6 +2933,20 @@ else instance HasAnyDMLRL (RL.Cons "set" Unit rest)
 else instance HasAnyDMLRL (RL.Cons "delete" Unit rest)
 else instance HasAnyDMLRL rest => HasAnyDMLRL (RL.Cons label typ rest)
 else instance Fail (Text "WHERE requires a preceding SELECT, UPDATE (set), or DELETE") => HasAnyDMLRL RL.Nil
+
+class HasMutation :: Row Type -> Constraint
+class HasMutation stage
+
+instance (RL.RowToList stage rl, HasMutationRL rl) => HasMutation stage
+
+class HasMutationRL :: RL.RowList Type -> Constraint
+class HasMutationRL rl
+
+instance HasMutationRL (RL.Cons "insert" Unit rest)
+else instance HasMutationRL (RL.Cons "set" Unit rest)
+else instance HasMutationRL (RL.Cons "delete" Unit rest)
+else instance HasMutationRL rest => HasMutationRL (RL.Cons label typ rest)
+else instance Fail (Text "RETURNING requires a preceding INSERT, UPDATE (set), or DELETE") => HasMutationRL RL.Nil
 
 toSQL :: forall tables result params stage. Q tables result params stage -> String
 toSQL (Q q) = q.sql
@@ -3149,13 +3232,17 @@ insert rec _ = Q { sql, values }
   tableName = reflectSymbol (Proxy :: Proxy name)
   colNames = columnNamesRL (Proxy :: Proxy userRowRL)
   placeholders = colNames # mapWithIndex \i _ -> "$" <> show (i + 1)
-  sql = "INSERT INTO " <> tableName
-    <> " ("
-    <> intercalate ", " colNames
-    <> ")"
-    <> " VALUES ("
-    <> intercalate ", " placeholders
-    <> ")"
+  sql =
+    if Array.null colNames then
+      "INSERT INTO " <> tableName <> " DEFAULT VALUES"
+    else
+      "INSERT INTO " <> tableName
+        <> " ("
+        <> intercalate ", " colNames
+        <> ")"
+        <> " VALUES ("
+        <> intercalate ", " placeholders
+        <> ")"
   values = recordValuesRL (Proxy :: Proxy userRowRL) rec
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3167,6 +3254,7 @@ returning
    . SingleTable tables name cols
   => IsSymbol sel
   => ParseSelect sel tables result
+  => HasMutation stage
   => Row.Lacks "returning" stage
   => Row.Lacks "select" stage
   => Row.Cons "returning" Unit stage stage'
@@ -3178,6 +3266,7 @@ returningAll
   :: forall tables name cols result p stage stage'
    . SingleTable tables name cols
   => StripColumns cols result
+  => HasMutation stage
   => Row.Lacks "returning" stage
   => Row.Lacks "select" stage
   => Row.Cons "returning" Unit stage stage'
@@ -3682,6 +3771,7 @@ runExecuteTx txn params (Q q) = do
   let { sql, values } = replaceNamedParams (Array.length q.values) entries q.sql
   let allValues = q.values <> values
   PG.txExecute (PG.SQL sql) allValues txn
+
 
 decodeRows :: forall a. ReadForeign a => Array Foreign -> Either (NonEmptyList ForeignError) (Array a)
 decodeRows = traverse (readImpl >>> runExcept)
