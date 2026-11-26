@@ -3,7 +3,7 @@ module Yoga.Postgres.Schema where
 import Prelude
 
 import Control.Monad.Except (except, runExcept)
-import Data.Array (intercalate, mapWithIndex, foldl)
+import Data.Array (cons, foldl, intercalate, mapWithIndex, snoc)
 import Data.Array as Array
 import Data.Date (Date, day, month, year)
 import Data.DateTime (DateTime(..))
@@ -462,6 +462,11 @@ createTableDDLIfNotExists :: forall @a. CreateTableDDL a => String
 createTableDDLIfNotExists = do
   let ddl = createTableDDL @a
   "CREATE TABLE IF NOT EXISTS" <> SCU.drop 12 ddl
+
+createTableWithUniqueConstraint :: forall @a. CreateTableDDL a => String -> Array String -> String
+createTableWithUniqueConstraint constraintName columnNames = do
+  let ddl = createTableDDL @a
+  SCU.dropRight 1 ddl <> ", CONSTRAINT " <> constraintName <> " UNIQUE (" <> intercalate ", " columnNames <> "))"
 
 -- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 -- INSERT SQL generation

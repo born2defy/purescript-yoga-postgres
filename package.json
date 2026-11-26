@@ -19,6 +19,8 @@
     "yoga"
   ],
   "scripts": {
+    "build": "spago build",
+    "repl": "spago repl",
     "test": "spago test",
     "test:bash": "./test-with-docker.sh",
     "test:ts": "bun run test-with-docker.ts"
@@ -27,5 +29,14 @@
     "pg": "^8.11.0",
     "postgres": "^3.4.8",
     "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "spago": "1.0.5",
+    "purescript": "0.15.17"
+  },
+  "allowScripts": {
+    "purescript@0.15.17": true,
+    "ssh2@1.17.0": true,
+    "cpu-features@0.0.10": true
   }
 }

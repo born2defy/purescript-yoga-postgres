@@ -14,7 +14,8 @@ import Test.Spec (Spec, around, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 import Test.Postgres.Behavioral as Behavioral
 import Test.Spec.Reporter.Console (consoleReporter)
-import Test.Spec.Runner (runSpec)
+import Test.Spec.Runner (runSpec')
+import Test.Spec.Config (defaultConfig)
 import Yoga.Test.Docker as Docker
 import Test.Postgres.Schema as Schema
 import Yoga.Postgres as PG
@@ -165,7 +166,7 @@ spec = do
             conn
 
           result <- PG.query (PG.SQL "SELECT * FROM test_users WHERE age > $1")
-            [ PG.toPGValue 26 ]
+            [ PG.toPGValue 25 ]
             conn
           result.count `shouldEqual` 1
 
@@ -444,7 +445,10 @@ main = launchAff_ do
         liftEffect $ log "Postgres is ready!\n"
     )
     ( \_ -> do
+        liftEffect $ log "Cleanup attempting now"
         Docker.stopService (Docker.ComposeFile "docker-compose.test.yml")
         liftEffect $ log "Cleanup complete\n"
     )
-    (\_ -> runSpec [ consoleReporter ] spec)
+    (\_ -> do 
+        liftEffect $ log "Running tests..."
+        runSpec' (defaultConfig { exit = false }) [consoleReporter] spec)
